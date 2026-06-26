@@ -6,6 +6,7 @@ Källa: Stadsledningskontoret, Göteborgs Stad
 
 using Pkg
 Pkg.activate(@__DIR__)
+Pkg.instantiate()   # 의존 패키지가 없으면 자동 설치
 
 using PxWebApi2
 
