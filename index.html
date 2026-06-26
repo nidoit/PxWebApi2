@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Statistikvisare – Stadsledningskontoret, Göteborgs Stad</title>
+  <style>
+    :root {
+      --gbg-blue:   #004B87;
+      --gbg-yellow: #F5A800;
+      --bg:         #f4f6f9;
+      --card:       #ffffff;
+      --text:       #1a1a2e;
+      --muted:      #6b7280;
+      --border:     #e5e7eb;
+      --success:    #16a34a;
+      --error:      #dc2626;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      background: var(--gbg-blue);
+      color: white;
+      padding: 1rem 2rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      box-shadow: 0 2px 8px rgba(0,0,0,.2);
+    }
+    .logo {
+      width: 44px; height: 44px;
+      background: var(--gbg-yellow);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 900; font-size: 1.2rem; color: var(--gbg-blue);
+      flex-shrink: 0;
+    }
+    header h1 { font-size: 1.15rem; line-height: 1.3; }
+    header p  { font-size: .8rem; opacity: .8; }
+
+    /* ── Layout ── */
+    main { max-width: 1200px; margin: 0 auto; padding: 1.5rem; }
+
+    /* ── Upload / Status ── */
+    .upload-area {
+      background: var(--card);
+      border: 2px dashed var(--gbg-blue);
+      border-radius: 12px;
+      padding: 2rem;
+      text-align: center;
+      cursor: pointer;
+      transition: background .15s;
+      margin-bottom: 1.5rem;
+    }
+    .upload-area:hover { background: #eef4fb; }
+    .upload-area input { display: none; }
+    .upload-icon { font-size: 2.5rem; margin-bottom: .5rem; }
+    .upload-area p { color: var(--muted); font-size: .95rem; }
+    .upload-area strong { color: var(--gbg-blue); }
+
+    .status-bar {
+      display: none;
+      padding: .6rem 1rem;
+      border-radius: 8px;
+      font-size: .9rem;
+      margin-bottom: 1rem;
+      align-items: center;
+      gap: .5rem;
+    }
+    .status-bar.info    { display: flex; background: #dbeafe; color: #1e40af; }
+    .status-bar.success { display: flex; background: #dcfce7; color: var(--success); }
+    .status-bar.error   { display: flex; background: #fee2e2; color: var(--error); }
+
+    /* ── Källa badge ── */
+    .källa-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: .4rem;
+      background: var(--gbg-yellow);
+      color: var(--gbg-blue);
+      font-weight: 700;
+      font-size: .8rem;
+      padding: .3rem .7rem;
+      border-radius: 20px;
+      margin-bottom: 1.5rem;
+    }
+
+    /* ── Cards ── */
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px,1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+    .card {
+      background: var(--card);
+      border-radius: 10px;
+      padding: 1.2rem 1.4rem;
+      box-shadow: 0 1px 4px rgba(0,0,0,.06);
+    }
+    .card .label { font-size: .8rem; color: var(--muted); margin-bottom: .3rem; }
+    .card .value { font-size: 1.8rem; font-weight: 700; color: var(--gbg-blue); }
+    .card .sub   { font-size: .8rem; color: var(--muted); }
+
+    /* ── Tabs ── */
+    .tabs { display: flex; gap: .5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+    .tab {
+      padding: .5rem 1.1rem;
+      border-radius: 8px;
+      border: 1.5px solid var(--border);
+      background: var(--card);
+      cursor: pointer;
+      font-size: .9rem;
+      font-weight: 500;
+      transition: all .15s;
+    }
+    .tab:hover  { border-color: var(--gbg-blue); color: var(--gbg-blue); }
+    .tab.active { background: var(--gbg-blue); color: white; border-color: var(--gbg-blue); }
+
+    /* ── Panel ── */
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    /* ── Section heading ── */
+    .section-title {
+      font-size: 1rem;
+      font-weight: 600;
+      color: var(--gbg-blue);
+      margin-bottom: .8rem;
+      padding-bottom: .4rem;
+      border-bottom: 2px solid var(--gbg-yellow);
+    }
+
+    /* ── Table ── */
+    .table-wrap {
+      overflow-x: auto;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      margin-bottom: 1.2rem;
+    }
+    table { width: 100%; border-collapse: collapse; font-size: .875rem; }
+    thead th {
+      background: var(--gbg-blue);
+      color: white;
+      padding: .6rem .9rem;
+      text-align: left;
+      white-space: nowrap;
+      font-weight: 600;
+    }
+    tbody tr:nth-child(even) { background: #f9fafb; }
+    tbody td {
+      padding: .5rem .9rem;
+      border-bottom: 1px solid var(--border);
+      max-width: 320px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    tbody tr:hover td { background: #eff6ff; }
+
+    /* ── Search ── */
+    .search-bar {
+      display: flex; gap: .6rem; margin-bottom: .8rem;
+    }
+    .search-bar input {
+      flex: 1;
+      padding: .5rem .9rem;
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      font-size: .9rem;
+      outline: none;
+    }
+    .search-bar input:focus { border-color: var(--gbg-blue); }
+
+    /* ── JSON block ── */
+    .json-block {
+      background: #1e1e2e;
+      color: #cdd6f4;
+      border-radius: 8px;
+      padding: 1rem;
+      font-family: 'Cascadia Code', 'Fira Code', monospace;
+      font-size: .8rem;
+      overflow-x: auto;
+      white-space: pre;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+
+    /* ── Select tabell ── */
+    .select-wrap { margin-bottom: 1rem; }
+    select {
+      padding: .5rem .9rem;
+      border: 1.5px solid var(--border);
+      border-radius: 8px;
+      font-size: .9rem;
+      min-width: 280px;
+      outline: none;
+    }
+    select:focus { border-color: var(--gbg-blue); }
+
+    /* ── Spinner ── */
+    .spinner {
+      display: inline-block;
+      width: 16px; height: 16px;
+      border: 2px solid currentColor;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    footer {
+      text-align: center;
+      padding: 1.5rem;
+      font-size: .8rem;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="logo">GBG</div>
+  <div>
+    <h1>Statistikvisare – PxWeb API</h1>
+    <p>Stadsledningskontoret, Göteborgs Stad</p>
+  </div>
+</header>
+
+<main>
+
+  <!-- Upload -->
+  <div class="upload-area" id="dropZone">
+    <input type="file" id="fileInput" accept=".duckdb,.db" />
+    <div class="upload-icon">🦆</div>
+    <p><strong>Klicka eller dra hit</strong> din <code>stat.duckdb</code>-fil</p>
+    <p style="margin-top:.4rem;font-size:.8rem;">Filen läses lokalt i webbläsaren – inget skickas till server</p>
+  </div>
+
+  <div class="status-bar" id="statusBar">
+    <span class="spinner" id="statusSpinner" style="display:none"></span>
+    <span id="statusText"></span>
+  </div>
+
+  <!-- Content (dolt tills fil laddas) -->
+  <div id="content" style="display:none">
+
+    <div class="källa-badge">
+      📍 Källa: <span id="källaText">Stadsledningskontoret, Göteborgs Stad</span>
+      &nbsp;|&nbsp; 🕐 <span id="tidpunktText"></span>
+    </div>
+
+    <!-- Statistikkort -->
+    <div class="grid" id="statsGrid"></div>
+
+    <!-- Flikar -->
+    <div class="tabs">
+      <button class="tab active" data-tab="katalog">📂 Tabellkatalog</button>
+      <button class="tab" data-tab="data">📊 Statistikdata</button>
+      <button class="tab" data-tab="logg">📋 Hämtningslogg</button>
+      <button class="tab" data-tab="json">{ } JSON-export</button>
+    </div>
+
+    <!-- Panel: Katalog -->
+    <div class="panel active" id="tab-katalog">
+      <div class="section-title">Tabellkatalog</div>
+      <div class="search-bar">
+        <input type="text" id="katalogSearch" placeholder="Sök tabell-ID eller titel..." />
+      </div>
+      <div class="table-wrap" id="katalogWrap"></div>
+    </div>
+
+    <!-- Panel: Data -->
+    <div class="panel" id="tab-data">
+      <div class="section-title">Statistikdata</div>
+      <div class="select-wrap">
+        <select id="tabellSelect"><option value="">– Välj tabell –</option></select>
+      </div>
+      <div id="dataInfo" style="font-size:.85rem;color:var(--muted);margin-bottom:.8rem;"></div>
+      <div class="table-wrap" id="dataWrap"></div>
+    </div>
+
+    <!-- Panel: Logg -->
+    <div class="panel" id="tab-logg">
+      <div class="section-title">Hämtningslogg</div>
+      <div class="table-wrap" id="loggWrap"></div>
+      <div id="loggSummary" style="margin-top:.8rem;font-size:.9rem;"></div>
+    </div>
+
+    <!-- Panel: JSON -->
+    <div class="panel" id="tab-json">
+      <div class="section-title">JSON-export</div>
+      <div style="margin-bottom:.8rem;display:flex;gap:.6rem;flex-wrap:wrap;">
+        <select id="jsonSelect">
+          <option value="katalog">tabellkatalog</option>
+          <option value="logg">hämtningslogg</option>
+          <option value="data">statistikdata (aktiv tabell)</option>
+        </select>
+        <button onclick="kopieraJson()" style="padding:.4rem .9rem;border-radius:6px;border:1.5px solid var(--gbg-blue);background:white;cursor:pointer;font-size:.85rem;">📋 Kopiera</button>
+        <button onclick="laddaNedJson()" style="padding:.4rem .9rem;border-radius:6px;border:1.5px solid var(--gbg-blue);background:white;cursor:pointer;font-size:.85rem;">⬇ Ladda ner</button>
+      </div>
+      <div class="json-block" id="jsonBlock">{ }</div>
+    </div>
+
+  </div><!-- /content -->
+</main>
+
+<footer>
+  Stadsledningskontoret, Göteborgs Stad &nbsp;|&nbsp;
+  Datakälla: <a href="https://www.scb.se" target="_blank">SCB – Sveriges statistik</a> &nbsp;|&nbsp;
+  Drivs av <a href="https://duckdb.org/docs/api/wasm/overview" target="_blank">DuckDB-WASM</a>
+</footer>
+
+<!-- DuckDB-WASM (CDN) -->
+<script type="module">
+  import * as duckdb from 'https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.29.0/+esm';
+
+  const KÄLLA = "Stadsledningskontoret, Göteborgs Stad";
+  let db, conn;
+  let currentData = [];
+  let katalogRows = [];
+
+  // ── Status ──
+  function setStatus(msg, type = 'info', spinner = false) {
+    const bar = document.getElementById('statusBar');
+    bar.className = 'status-bar ' + type;
+    document.getElementById('statusText').textContent = msg;
+    document.getElementById('statusSpinner').style.display = spinner ? 'inline-block' : 'none';
+  }
+
+  // ── DuckDB init ──
+  async function initDuckDB(buffer) {
+    setStatus('Initierar DuckDB-WASM...', 'info', true);
+
+    const JSDELIVR_BUNDLES = duckdb.getJsDelivrBundles();
+    const bundle = await duckdb.selectBundle(JSDELIVR_BUNDLES);
+    const worker_url = URL.createObjectURL(
+      new Blob([`importScripts("${bundle.mainWorker}");`], { type: 'text/javascript' })
+    );
+    const worker = new Worker(worker_url);
+    const logger = new duckdb.ConsoleLogger();
+    db = new duckdb.AsyncDuckDB(logger, worker);
+    await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+
+    setStatus('Laddar .duckdb-fil...', 'info', true);
+    await db.registerFileBuffer('stat.duckdb', new Uint8Array(buffer));
+    conn = await db.connect();
+    await conn.query("ATTACH 'stat.duckdb' AS stat (READ_ONLY)");
+
+    setStatus('Databasen laddad!', 'success');
+    URL.revokeObjectURL(worker_url);
+  }
+
+  // ── Kör SQL ──
+  async function sql(query, schema = 'stat') {
+    const q = schema ? query.replace(/\bFROM\s+(\w)/g, `FROM ${schema}.$1`) : query;
+    try {
+      const result = await conn.query(q);
+      const cols = result.schema.fields.map(f => f.name);
+      const rows = [];
+      for (const batch of result.batches) {
+        for (let i = 0; i < batch.numRows; i++) {
+          const row = {};
+          cols.forEach((c, j) => { row[c] = batch.getChildAt(j)?.get(i) ?? null; });
+          rows.push(row);
+        }
+      }
+      return { cols, rows };
+    } catch(e) {
+      console.error(query, e);
+      return { cols: [], rows: [] };
+    }
+  }
+
+  // ── Bygg HTML-tabell ──
+  function byggTabell(cols, rows, maxRader = 500) {
+    if (!rows.length) return '<p style="padding:.8rem;color:var(--muted)">Inga rader</p>';
+    const visa = rows.slice(0, maxRader);
+    let h = '<table><thead><tr>' + cols.map(c => `<th>${c}</th>`).join('') + '</tr></thead><tbody>';
+    visa.forEach(r => {
+      h += '<tr>' + cols.map(c => {
+        let v = r[c]; if (v === null || v === undefined) v = '';
+        return `<td title="${String(v).replace(/"/g,"'")}">${String(v)}</td>`;
+      }).join('') + '</tr>';
+    });
+    h += '</tbody></table>';
+    if (rows.length > maxRader)
+      h += `<p style="padding:.4rem .8rem;font-size:.8rem;color:var(--muted)">Visar ${maxRader} av ${rows.length} rader</p>`;
+    return h;
+  }
+
+  // ── Läs databasen ──
+  async function läsDatabas() {
+    // Statistik
+    const tabRes  = await sql("SELECT COUNT(*) AS n FROM stat.tabellkatalog WHERE typ='tabell'");
+    const mappRes = await sql("SELECT COUNT(*) AS n FROM stat.tabellkatalog WHERE typ='mapp'");
+    const loggRes = await sql("SELECT COUNT(*) AS n FROM stat.hämtningslogg");
+
+    // Räkna data-tabeller
+    const allTabRes = await conn.query(`
+      SELECT table_name FROM information_schema.tables
+      WHERE table_schema = 'stat' AND table_name LIKE 'data_%'
+    `);
+    const dataTabs = [];
+    for (const batch of allTabRes.batches)
+      for (let i = 0; i < batch.numRows; i++)
+        dataTabs.push(batch.getChildAt(0)?.get(i));
+
+    document.getElementById('statsGrid').innerHTML = `
+      <div class="card"><div class="label">Statistiktabeller (API)</div>
+        <div class="value">${tabRes.rows[0]?.n ?? 0}</div><div class="sub">tabeller funna</div></div>
+      <div class="card"><div class="label">Mappar</div>
+        <div class="value">${mappRes.rows[0]?.n ?? 0}</div><div class="sub">i katalogen</div></div>
+      <div class="card"><div class="label">Sparade datatabeller</div>
+        <div class="value">${dataTabs.length}</div><div class="sub">i databasen</div></div>
+      <div class="card"><div class="label">Hämtningar</div>
+        <div class="value">${loggRes.rows[0]?.n ?? 0}</div><div class="sub">i loggen</div></div>
+    `;
+
+    document.getElementById('tidpunktText').textContent = new Date().toLocaleString('sv-SE');
+
+    // Katalog
+    const kat = await sql("SELECT id, titel, typ, sökväg, hämtad_vid FROM stat.tabellkatalog ORDER BY sökväg");
+    katalogRows = kat.rows;
+    renderKatalog(katalogRows);
+
+    // Logg
+    const logg = await sql(`
+      SELECT logg_id, tabell_id, tidpunkt, antal_rader, status, felmeddelande, källa
+      FROM stat.hämtningslogg ORDER BY tidpunkt DESC
+    `);
+    document.getElementById('loggWrap').innerHTML = byggTabell(logg.cols, logg.rows);
+    const lyckade = logg.rows.filter(r => r.status === 'lyckad').length;
+    document.getElementById('loggSummary').innerHTML =
+      `✓ Lyckade: <strong>${lyckade}</strong> &nbsp;|&nbsp; ✗ Misslyckade: <strong>${logg.rows.length - lyckade}</strong>
+       &nbsp;|&nbsp; Källa: <em>${KÄLLA}</em>`;
+
+    // Tabell-select för data
+    const sel = document.getElementById('tabellSelect');
+    dataTabs.forEach(t => {
+      const opt = document.createElement('option');
+      opt.value = t; opt.textContent = t;
+      sel.appendChild(opt);
+    });
+
+    // Standard JSON
+    uppdateraJson();
+
+    document.getElementById('content').style.display = 'block';
+  }
+
+  function renderKatalog(rows) {
+    document.getElementById('katalogWrap').innerHTML =
+      byggTabell(['id','titel','typ','sökväg','hämtad_vid'], rows);
+  }
+
+  // Sök i katalog
+  document.getElementById('katalogSearch').addEventListener('input', e => {
+    const q = e.target.value.toLowerCase();
+    renderKatalog(q
+      ? katalogRows.filter(r =>
+          (r.id||'').toLowerCase().includes(q) ||
+          (r.titel||'').toLowerCase().includes(q) ||
+          (r.sökväg||'').toLowerCase().includes(q))
+      : katalogRows
+    );
+  });
+
+  // Tabell-select
+  document.getElementById('tabellSelect').addEventListener('change', async e => {
+    const tbl = e.target.value;
+    if (!tbl) return;
+    const res = await sql(`SELECT * FROM stat."${tbl}"`, '');
+    currentData = { cols: res.cols, rows: res.rows };
+    document.getElementById('dataInfo').textContent =
+      `${res.rows.length} rader · ${res.cols.length} kolumner · Källa: ${KÄLLA}`;
+    document.getElementById('dataWrap').innerHTML = byggTabell(res.cols, res.rows);
+    uppdateraJson();
+  });
+
+  // JSON
+  async function uppdateraJson() {
+    const val = document.getElementById('jsonSelect').value;
+    let data;
+
+    if (val === 'katalog') {
+      data = { källa: KÄLLA, tidpunkt: new Date().toISOString(),
+               antal: katalogRows.length, tabellkatalog: katalogRows };
+    } else if (val === 'logg') {
+      const r = await sql("SELECT * FROM stat.hämtningslogg ORDER BY tidpunkt DESC", '');
+      data = { källa: KÄLLA, tidpunkt: new Date().toISOString(), logg: r.rows };
+    } else {
+      data = { källa: KÄLLA, tidpunkt: new Date().toISOString(),
+               tabell: document.getElementById('tabellSelect').value,
+               ...(currentData || { cols: [], rows: [] }),
+               data: (currentData?.rows || []) };
+    }
+
+    document.getElementById('jsonBlock').textContent = JSON.stringify(data, null, 2);
+  }
+
+  document.getElementById('jsonSelect').addEventListener('change', uppdateraJson);
+
+  window.kopieraJson = () => {
+    navigator.clipboard.writeText(document.getElementById('jsonBlock').textContent)
+      .then(() => setStatus('JSON kopierat till urklipp!', 'success'));
+  };
+
+  window.laddaNedJson = () => {
+    const blob = new Blob([document.getElementById('jsonBlock').textContent],
+                          { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `statistik_${new Date().toISOString().slice(0,19).replace(/:/g,'-')}.json`;
+    a.click();
+  };
+
+  // ── Flikar ──
+  document.querySelectorAll('.tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+      btn.classList.add('active');
+      document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+      if (btn.dataset.tab === 'json') uppdateraJson();
+    });
+  });
+
+  // ── Filuppladdning ──
+  async function hanteraFil(file) {
+    if (!file) return;
+    setStatus(`Läser ${file.name} (${(file.size/1024).toFixed(0)} KB)...`, 'info', true);
+    const buffer = await file.arrayBuffer();
+    try {
+      await initDuckDB(buffer);
+      await läsDatabas();
+    } catch(e) {
+      setStatus('Fel: ' + e.message, 'error');
+      console.error(e);
+    }
+  }
+
+  document.getElementById('fileInput').addEventListener('change', e => hanteraFil(e.target.files[0]));
+  document.getElementById('dropZone').addEventListener('click', () =>
+    document.getElementById('fileInput').click());
+
+  const dropZone = document.getElementById('dropZone');
+  dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.style.background = '#eef4fb'; });
+  dropZone.addEventListener('dragleave', () => { dropZone.style.background = ''; });
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.style.background = '';
+    hanteraFil(e.dataTransfer.files[0]);
+  });
+</script>
+
+</body>
+</html>
