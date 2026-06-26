@@ -10,7 +10,8 @@ Pkg.activate(@__DIR__)
 # 필요한 패키지를 한 번에 설치 (분리 설치 시 프리컴파일 충돌 방지)
 let deps = Pkg.project().dependencies
     미설치 = filter(p -> !haskey(deps, p),
-                   ["HTTP", "JSON3", "DuckDB", "DataFrames", "Tables"])
+                   ["HTTP", "JSON3", "DuckDB", "DataFrames", "Tables",
+                    "Dates", "Logging", "Printf"])
     if !isempty(미설치)
         println("패키지 설치 중: $(join(미설치, ", "))")
         Pkg.add(미설치)
