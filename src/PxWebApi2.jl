@@ -19,7 +19,7 @@ using Printf
 using Tables
 
 export PxWebKlient, hämta_tabeller, hämta_metadata, hämta_data, spara_till_duckdb
-export utforska_och_spara, visa_tabeller, visa_data_json
+export utforska_och_spara, visa_tabeller, visa_data_json, visa_logg
 
 # ─────────────────────────────────────────────────────────────
 #  Konstanter och konfiguration
@@ -42,16 +42,11 @@ const HTTP_HEADERS = [
 #  Strukturer
 # ─────────────────────────────────────────────────────────────
 
-"""
-    PxWebKlient
-
-Konfiguration för API-klienten.
-"""
 struct PxWebKlient
     bas_url::String
     db_sökväg::String
-    timeout::Int      # sekunder
-    max_antal::Int    # max rader per tabell (0 = obegränsat)
+    timeout::Int
+    max_antal::Int
 end
 
 PxWebKlient(;
@@ -64,7 +59,7 @@ PxWebKlient(;
 struct Tabellpost
     id::String
     titel::String
-    typ::String   # "l" = mapp, "t" = tabell
+    typ::String
     sökväg::String
 end
 
@@ -83,6 +78,15 @@ struct Tabellmetadata
 end
 
 # ─────────────────────────────────────────────────────────────
+#  DuckDB-hjälpare  (använder DB direkt, ingen separat Connection)
+# ─────────────────────────────────────────────────────────────
+
+_kör(db::DuckDB.DB, sql::String)                   = DuckDB.execute(db, sql)
+_kör(db::DuckDB.DB, sql::String, params::Vector)   = DuckDB.execute(db, sql, params)
+_df(db::DuckDB.DB, sql::String)                    = DataFrame(_kör(db, sql))
+_df(db::DuckDB.DB, sql::String, params::Vector)    = DataFrame(_kör(db, sql, params))
+
+# ─────────────────────────────────────────────────────────────
 #  Databas-initiering
 # ─────────────────────────────────────────────────────────────
 
@@ -90,13 +94,11 @@ end
     initiera_databas(db_sökväg) -> DuckDB.DB
 
 Skapar DuckDB-databasen och nödvändiga tabeller om de inte finns.
-Alla tabellnamn och kolumnnamn är på svenska.
 """
 function initiera_databas(db_sökväg::String)
     db = DuckDB.DB(db_sökväg)
-    con = DuckDB.connect(db)
 
-    DuckDB.execute(con, """
+    _kör(db, """
         CREATE TABLE IF NOT EXISTS tabellkatalog (
             id          TEXT PRIMARY KEY,
             titel       TEXT,
@@ -106,7 +108,7 @@ function initiera_databas(db_sökväg::String)
         )
     """)
 
-    DuckDB.execute(con, """
+    _kör(db, """
         CREATE TABLE IF NOT EXISTS tabellvariabler (
             tabell_id       TEXT,
             variabelkod     TEXT,
@@ -118,7 +120,7 @@ function initiera_databas(db_sökväg::String)
         )
     """)
 
-    DuckDB.execute(con, """
+    _kör(db, """
         CREATE TABLE IF NOT EXISTS hämtningslogg (
             logg_id         INTEGER PRIMARY KEY,
             tabell_id       TEXT,
@@ -131,11 +133,8 @@ function initiera_databas(db_sökväg::String)
         )
     """)
 
-    DuckDB.execute(con, """
-        CREATE SEQUENCE IF NOT EXISTS seq_logg_id START 1
-    """)
+    _kör(db, "CREATE SEQUENCE IF NOT EXISTS seq_logg_id START 1")
 
-    DuckDB.close(con)
     return db
 end
 
@@ -149,8 +148,8 @@ function _get_json(url::String; timeout::Int = 60)
 end
 
 function _post_json(url::String, kropp; timeout::Int = 60)
-    data = JSON3.write(kropp)
-    svar = HTTP.post(url, HTTP_HEADERS, data; readtimeout = timeout, retry = false)
+    svar = HTTP.post(url, HTTP_HEADERS, JSON3.write(kropp);
+                     readtimeout = timeout, retry = false)
     return JSON3.read(String(svar.body))
 end
 
@@ -158,30 +157,19 @@ end
 #  Navigation och katalog
 # ─────────────────────────────────────────────────────────────
 
-"""
-    hämta_tabeller(klient, sökväg="") -> Vector{Tabellpost}
-
-Hämtar alla tabeller och mappar rekursivt från API:t.
-`sökväg` anger startpunkt i navigationsträdet.
-"""
 function hämta_tabeller(klient::PxWebKlient, sökväg::String = "")
     resultat = Tabellpost[]
     _rekursiv_hämtning!(resultat, klient, sökväg)
     return resultat
 end
 
-function _rekursiv_hämtning!(
-    lista::Vector{Tabellpost},
-    klient::PxWebKlient,
-    sökväg::String,
-)
+function _rekursiv_hämtning!(lista, klient, sökväg)
     url = isempty(sökväg) ? klient.bas_url : "$(klient.bas_url)/$sökväg"
     try
-        poster = _get_json(url; timeout = klient.timeout)
-        for post in poster
-            id   = get(post, :id, "")
-            text = get(post, :text, "")
-            typ  = get(post, :type, "")
+        for post in _get_json(url; timeout = klient.timeout)
+            id        = get(post, :id, "")
+            text      = get(post, :text, "")
+            typ       = get(post, :type, "")
             ny_sökväg = isempty(sökväg) ? id : "$sökväg/$id"
 
             if typ == "t"
@@ -196,22 +184,12 @@ function _rekursiv_hämtning!(
     end
 end
 
-"""
-    spara_tabellkatalog!(db, tabeller)
-
-Sparar tabellkatalogen till databasen.
-"""
 function spara_tabellkatalog!(db::DuckDB.DB, tabeller::Vector{Tabellpost})
-    con = DuckDB.connect(db)
-    try
-        for t in tabeller
-            DuckDB.execute(con, """
-                INSERT OR REPLACE INTO tabellkatalog (id, titel, typ, sökväg, hämtad_vid)
-                VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
-            """, [t.id, t.titel, t.typ, t.sökväg])
-        end
-    finally
-        DuckDB.close(con)
+    for t in tabeller
+        _kör(db, """
+            INSERT OR REPLACE INTO tabellkatalog (id, titel, typ, sökväg, hämtad_vid)
+            VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+        """, [t.id, t.titel, t.typ, t.sökväg])
     end
     @info "Sparade $(length(tabeller)) poster i tabellkatalogen."
 end
@@ -220,54 +198,31 @@ end
 #  Metadata
 # ─────────────────────────────────────────────────────────────
 
-"""
-    hämta_metadata(klient, sökväg) -> Tabellmetadata
-
-Hämtar variabelbeskrivning för en specifik tabell.
-"""
 function hämta_metadata(klient::PxWebKlient, sökväg::String)
-    url = "$(klient.bas_url)/$sökväg"
-    data = _get_json(url; timeout = klient.timeout)
+    data = _get_json("$(klient.bas_url)/$sökväg"; timeout = klient.timeout)
 
-    titel = get(data, :title, "Okänd")
-    variabler = Variabel[]
+    variabler = [
+        Variabel(
+            get(v, :code, ""),
+            get(v, :text, ""),
+            String.(get(v, :values, [])),
+            String.(get(v, :valueTexts, [])),
+            get(v, :elimination, false),
+        )
+        for v in get(data, :variables, [])
+    ]
 
-    for v in get(data, :variables, [])
-        kod        = get(v, :code, "")
-        namn       = get(v, :text, "")
-        värden     = String.(get(v, :values, []))
-        värdetext  = String.(get(v, :valueTexts, []))
-        eliminerbar = get(v, :elimination, false)
-        push!(variabler, Variabel(kod, namn, värden, värdetext, eliminerbar))
-    end
-
-    return Tabellmetadata(titel, variabler, sökväg)
+    return Tabellmetadata(get(data, :title, "Okänd"), variabler, sökväg)
 end
 
-"""
-    spara_metadata!(db, tabell_id, metadata)
-
-Sparar variabelmetadata till databasen.
-"""
 function spara_metadata!(db::DuckDB.DB, tabell_id::String, meta::Tabellmetadata)
-    con = DuckDB.connect(db)
-    try
-        for v in meta.variabler
-            DuckDB.execute(con, """
-                INSERT OR REPLACE INTO tabellvariabler
-                    (tabell_id, variabelkod, variabelnamn, värden, värdetext, eliminerbar)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, [
-                tabell_id,
-                v.kod,
-                v.namn,
-                JSON3.write(v.värden),
-                JSON3.write(v.värdetext),
-                v.eliminerbar,
-            ])
-        end
-    finally
-        DuckDB.close(con)
+    for v in meta.variabler
+        _kör(db, """
+            INSERT OR REPLACE INTO tabellvariabler
+                (tabell_id, variabelkod, variabelnamn, värden, värdetext, eliminerbar)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, [tabell_id, v.kod, v.namn,
+              JSON3.write(v.värden), JSON3.write(v.värdetext), v.eliminerbar])
     end
 end
 
@@ -275,71 +230,34 @@ end
 #  Datafråga
 # ─────────────────────────────────────────────────────────────
 
-"""
-    bygg_förfrågan(metadata; urval=nothing) -> Dict
-
-Bygger en PxWeb-förfrågan som väljer alla värden om inget urval anges.
-`urval` är en Dict{String,Vector{String}} med variabelkod => värden.
-"""
 function bygg_förfrågan(meta::Tabellmetadata; urval = nothing)
-    fråga = Dict{String,Any}[]
-
-    for v in meta.variabler
-        if urval !== nothing && haskey(urval, v.kod)
-            valda = urval[v.kod]
-        else
-            valda = isempty(v.värden) ? ["*"] : v.värden
-        end
-
-        push!(fråga, Dict(
-            "code"      => v.kod,
-            "selection" => Dict(
-                "filter" => "item",
-                "values" => valda,
-            ),
-        ))
+    fråga = map(meta.variabler) do v
+        valda = (urval !== nothing && haskey(urval, v.kod)) ?
+                urval[v.kod] :
+                (isempty(v.värden) ? ["*"] : v.värden)
+        Dict("code" => v.kod,
+             "selection" => Dict("filter" => "item", "values" => valda))
     end
-
-    return Dict(
-        "query"    => fråga,
-        "response" => Dict("format" => "json"),
-    )
+    return Dict("query" => fråga, "response" => Dict("format" => "json"))
 end
 
-"""
-    hämta_data(klient, sökväg; urval=nothing) -> DataFrame
-
-Hämtar statistikdata och returnerar som DataFrame.
-"""
 function hämta_data(klient::PxWebKlient, sökväg::String; urval = nothing)
-    meta = hämta_metadata(klient, sökväg)
-    förfrågan = bygg_förfrågan(meta; urval)
-
-    url = "$(klient.bas_url)/$sökväg"
-    svar = _post_json(url, förfrågan; timeout = klient.timeout)
-
+    meta     = hämta_metadata(klient, sökväg)
+    svar     = _post_json("$(klient.bas_url)/$sökväg",
+                          bygg_förfrågan(meta; urval);
+                          timeout = klient.timeout)
     return _parse_svar(svar)
 end
 
 function _parse_svar(svar)
-    kolumner = [String(k[:code]) for k in svar[:columns]]
-    kolnamn  = [String(k[:text]) for k in svar[:columns]]
-    typer    = [String(k[:type]) for k in svar[:columns]]
+    kolnamn = [String(k[:text]) for k in svar[:columns]]
+    rader   = [vcat(String.(rad[:key]), String.(rad[:values]))
+               for rad in svar[:data]]
 
-    rader = Vector{Any}[]
-    for rad in svar[:data]
-        nyckel  = String.(rad[:key])
-        värden  = String.(rad[:values])
-        push!(rader, vcat(nyckel, värden))
-    end
-
-    # Bygg DataFrame med svenska kolumnnamn
-    n_nycklar = count(t -> t == "d", typer)
     df = DataFrame()
     for (i, namn) in enumerate(kolnamn)
-        df[!, Symbol(namn)] = [r[i] for r in rader]
+        df[!, Symbol(namn)] = isempty(rader) ? String[] : [r[i] for r in rader]
     end
-
     return df
 end
 
@@ -347,53 +265,38 @@ end
 #  Spara data till DuckDB
 # ─────────────────────────────────────────────────────────────
 
-"""
-    spara_till_duckdb(db, tabell_id, df, sökväg) -> Int
-
-Sparar en DataFrame till en tabell i DuckDB namngiven efter tabell_id.
-Returnerar antal sparade rader.
-"""
 function spara_till_duckdb(
     db::DuckDB.DB,
     tabell_id::String,
     df::DataFrame,
     sökväg::String,
 )
-    # Sanera tabellnamn för DuckDB
     db_tabellnamn = "data_" * replace(tabell_id, r"[^a-zA-Z0-9_]" => "_")
-
-    con = DuckDB.connect(db)
-    antal_rader = 0
-    status = "lyckad"
+    antal_rader   = 0
+    status        = "lyckad"
     felmeddelande = nothing
 
     try
-        # Skapa eller ersätt tabellen med data
-        DuckDB.register_data_frame(con, df, "tmp_import")
-        DuckDB.execute(con, """
+        DuckDB.register_data_frame(db, df, "tmp_import")
+        _kör(db, """
             CREATE TABLE IF NOT EXISTS "$db_tabellnamn" AS
             SELECT * FROM tmp_import WHERE 1=0
         """)
-        DuckDB.execute(con, """
-            INSERT INTO "$db_tabellnamn" SELECT * FROM tmp_import
-        """)
+        _kör(db, """INSERT INTO "$db_tabellnamn" SELECT * FROM tmp_import""")
         antal_rader = nrow(df)
-
     catch e
-        status = "misslyckad"
+        status        = "misslyckad"
         felmeddelande = string(e)
         @error "Fel vid sparande av $tabell_id" undantag = e
-    finally
-        # Logga hämtningen
-        try
-            DuckDB.execute(con, """
-                INSERT INTO hämtningslogg
-                    (logg_id, tabell_id, sökväg, tidpunkt, antal_rader, status, felmeddelande)
-                VALUES (nextval('seq_logg_id'), ?, ?, CURRENT_TIMESTAMP, ?, ?, ?)
-            """, [tabell_id, sökväg, antal_rader, status, felmeddelande])
-        catch
-        end
-        DuckDB.close(con)
+    end
+
+    try
+        _kör(db, """
+            INSERT INTO hämtningslogg
+                (logg_id, tabell_id, sökväg, tidpunkt, antal_rader, status, felmeddelande)
+            VALUES (nextval('seq_logg_id'), ?, ?, CURRENT_TIMESTAMP, ?, ?, ?)
+        """, [tabell_id, sökväg, antal_rader, status, felmeddelande])
+    catch
     end
 
     return antal_rader
@@ -403,85 +306,65 @@ end
 #  Komplett pipeline
 # ─────────────────────────────────────────────────────────────
 
-"""
-    utforska_och_spara(klient; startväg="", max_tabeller=0) -> Dict
-
-Utforskar API:t fullständigt och sparar alla tabeller till DuckDB.
-Returnerar ett JSON-kompatibelt resultat med statistik och källa.
-"""
 function utforska_och_spara(
     klient::PxWebKlient;
-    startväg::String   = "",
-    max_tabeller::Int  = 0,
+    startväg::String  = "",
+    max_tabeller::Int = 0,
 )
     db = initiera_databas(klient.db_sökväg)
-
     tidpunkt_start = now()
-    @info "Startar utforskning av PxWeb API..." bas_url = klient.bas_url
+    @info "Startar utforskning..." bas_url = klient.bas_url
 
-    # Hämta katalog
     alla_poster = hämta_tabeller(klient, startväg)
     tabeller    = filter(p -> p.typ == "tabell", alla_poster)
-    mappar      = filter(p -> p.typ == "mapp", alla_poster)
-
+    mappar      = filter(p -> p.typ == "mapp",   alla_poster)
     @info "Hittade $(length(mappar)) mappar och $(length(tabeller)) tabeller."
 
-    # Spara katalog
     spara_tabellkatalog!(db, alla_poster)
 
-    # Begränsa antal om önskat
-    om_tabeller = max_tabeller > 0 ? tabeller[1:min(max_tabeller, end)] : tabeller
-
-    sparade   = 0
-    misslyckade = 0
+    om_tabeller = max_tabeller > 0 ? tabeller[1:min(max_tabeller, length(tabeller))] : tabeller
+    sparade = misslyckade = 0
     fel_lista = String[]
 
     for (i, tabell) in enumerate(om_tabeller)
-        @info "[$i/$(length(om_tabeller))] Hämtar $(tabell.sökväg)..."
+        @info "[$i/$(length(om_tabeller))] $(tabell.sökväg)"
         try
-            df = hämta_data(klient, tabell.sökväg)
+            df   = hämta_data(klient, tabell.sökväg)
             antal = spara_till_duckdb(db, tabell.id, df, tabell.sökväg)
-            @info "  ✓ Sparade $antal rader → $(tabell.id)"
+            spara_metadata!(db, tabell.id, hämta_metadata(klient, tabell.sökväg))
+            @info "  ✓ $antal rader sparade → $(tabell.id)"
             sparade += 1
-
-            # Spara metadata
-            meta = hämta_metadata(klient, tabell.sökväg)
-            spara_metadata!(db, tabell.id, meta)
-
         catch e
-            @warn "  ✗ Fel vid $(tabell.sökväg): $e"
+            @warn "  ✗ Fel: $e"
             misslyckade += 1
             push!(fel_lista, "$(tabell.sökväg): $e")
         end
-
-        # Kort paus för att inte överbelasta servern
         sleep(0.5)
     end
 
-    tidpunkt_slut = now()
-    varaktighet   = Dates.value(tidpunkt_slut - tidpunkt_start) / 1000
+    close(db)
 
+    varaktighet = Dates.value(now() - tidpunkt_start) / 1000
     resultat = Dict(
-        "källa"          => KÄLLA,
-        "api_url"        => klient.bas_url,
-        "databas"        => klient.db_sökväg,
-        "tidpunkt"       => string(tidpunkt_start),
-        "varaktighet_s"  => varaktighet,
-        "statistik"      => Dict(
-            "antal_mappar"      => length(mappar),
-            "antal_tabeller"    => length(tabeller),
-            "sparade"           => sparade,
-            "misslyckade"       => misslyckade,
+        "källa"         => KÄLLA,
+        "api_url"       => klient.bas_url,
+        "databas"       => klient.db_sökväg,
+        "tidpunkt"      => string(tidpunkt_start),
+        "varaktighet_s" => varaktighet,
+        "statistik"     => Dict(
+            "antal_mappar"   => length(mappar),
+            "antal_tabeller" => length(tabeller),
+            "sparade"        => sparade,
+            "misslyckade"    => misslyckade,
         ),
-        "fel"            => fel_lista,
+        "fel" => fel_lista,
     )
 
     println("\n" * "="^60)
-    println("HÄMTNING SLUTFÖRD")
+    println("HÄMTNING SLUTFÖRD – $KÄLLA")
     println("="^60)
-    println(JSON3.write(resultat, allow_inf = false))
+    println(JSON3.write(resultat))
     println("="^60)
-
     return resultat
 end
 
@@ -489,131 +372,73 @@ end
 #  Visningsfunktioner (JSON-utdata)
 # ─────────────────────────────────────────────────────────────
 
-"""
-    visa_tabeller(db_sökväg) -> String
-
-Visar alla tabeller i katalogen som JSON.
-Inkluderar alltid källa: Stadsledningskontoret, Göteborgs Stad.
-"""
 function visa_tabeller(db_sökväg::String = DB_SÖKVÄG)
-    db = DuckDB.DB(db_sökväg)
-    con = DuckDB.connect(db)
-
-    rader = DuckDB.execute(con, """
-        SELECT id, titel, typ, sökväg, hämtad_vid
-        FROM tabellkatalog
-        ORDER BY sökväg
-    """) |> DataFrame
-
-    DuckDB.close(con)
-    DuckDB.close(db)
+    db    = DuckDB.DB(db_sökväg)
+    rader = _df(db, "SELECT id, titel, typ, sökväg, hämtad_vid FROM tabellkatalog ORDER BY sökväg")
+    close(db)
 
     utdata = Dict(
         "källa"    => KÄLLA,
         "tidpunkt" => string(now()),
         "databas"  => db_sökväg,
+        "antal"    => nrow(rader),
         "tabeller" => [
-            Dict(
-                "id"         => row.id,
-                "titel"      => row.titel,
-                "typ"        => row.typ,
-                "sökväg"     => row.sökväg,
-                "hämtad_vid" => string(row.hämtad_vid),
-            )
-            for row in eachrow(rader)
+            Dict("id" => r.id, "titel" => r.titel, "typ" => r.typ,
+                 "sökväg" => r.sökväg, "hämtad_vid" => string(r.hämtad_vid))
+            for r in eachrow(rader)
         ],
-        "antal" => nrow(rader),
     )
-
     json_str = JSON3.write(utdata)
     println(json_str)
     return json_str
 end
 
-"""
-    visa_data_json(db_sökväg, tabell_id) -> String
-
-Visar data för en specifik tabell som JSON.
-Inkluderar alltid källa: Stadsledningskontoret, Göteborgs Stad.
-"""
 function visa_data_json(db_sökväg::String, tabell_id::String)
-    db = DuckDB.DB(db_sökväg)
-    con = DuckDB.connect(db)
-
+    db            = DuckDB.DB(db_sökväg)
     db_tabellnamn = "data_" * replace(tabell_id, r"[^a-zA-Z0-9_]" => "_")
+    rader         = _df(db, """SELECT * FROM "$db_tabellnamn" LIMIT 1000""")
+    meta_rad      = _df(db, "SELECT titel, sökväg FROM tabellkatalog WHERE id = ?",
+                        [tabell_id])
+    close(db)
 
-    rader = DuckDB.execute(con, """
-        SELECT * FROM "$db_tabellnamn" LIMIT 1000
-    """) |> DataFrame
-
-    # Hämta metadata om tabellen
-    meta_rad = DuckDB.execute(con, """
-        SELECT titel, sökväg FROM tabellkatalog WHERE id = ?
-    """, [tabell_id]) |> DataFrame
-
-    DuckDB.close(con)
-    DuckDB.close(db)
-
-    titel   = isempty(meta_rad) ? tabell_id : meta_rad[1, :titel]
-    sökväg  = isempty(meta_rad) ? "" : meta_rad[1, :sökväg]
+    titel  = isempty(meta_rad) ? tabell_id : meta_rad[1, :titel]
+    sökväg = isempty(meta_rad) ? ""        : meta_rad[1, :sökväg]
 
     utdata = Dict(
-        "källa"     => KÄLLA,
-        "tidpunkt"  => string(now()),
-        "databas"   => db_sökväg,
-        "tabell_id" => tabell_id,
-        "titel"     => titel,
-        "sökväg"    => sökväg,
-        "antal_rader" => nrow(rader),
-        "kolumner"  => names(rader),
-        "data"      => [
-            Dict(zip(names(rader), Vector(row)))
-            for row in eachrow(rader)
-        ],
+        "källa"      => KÄLLA,
+        "tidpunkt"   => string(now()),
+        "databas"    => db_sökväg,
+        "tabell_id"  => tabell_id,
+        "titel"      => titel,
+        "sökväg"     => sökväg,
+        "antal_rader"=> nrow(rader),
+        "kolumner"   => names(rader),
+        "data"       => [Dict(zip(names(rader), Vector(r))) for r in eachrow(rader)],
     )
-
     json_str = JSON3.write(utdata)
     println(json_str)
     return json_str
 end
 
-"""
-    visa_logg(db_sökväg) -> String
-
-Visar hämtningsloggen som JSON.
-"""
 function visa_logg(db_sökväg::String = DB_SÖKVÄG)
-    db = DuckDB.DB(db_sökväg)
-    con = DuckDB.connect(db)
-
-    rader = DuckDB.execute(con, """
+    db    = DuckDB.DB(db_sökväg)
+    rader = _df(db, """
         SELECT logg_id, tabell_id, sökväg, tidpunkt, antal_rader, status, felmeddelande, källa
-        FROM hämtningslogg
-        ORDER BY tidpunkt DESC
-        LIMIT 100
-    """) |> DataFrame
-
-    DuckDB.close(con)
-    DuckDB.close(db)
+        FROM hämtningslogg ORDER BY tidpunkt DESC LIMIT 100
+    """)
+    close(db)
 
     utdata = Dict(
         "källa"    => KÄLLA,
         "tidpunkt" => string(now()),
         "logg"     => [
-            Dict(
-                "logg_id"       => row.logg_id,
-                "tabell_id"     => row.tabell_id,
-                "sökväg"        => row.sökväg,
-                "tidpunkt"      => string(row.tidpunkt),
-                "antal_rader"   => row.antal_rader,
-                "status"        => row.status,
-                "felmeddelande" => row.felmeddelande,
-                "källa"         => row.källa,
-            )
-            for row in eachrow(rader)
+            Dict("logg_id" => r.logg_id, "tabell_id" => r.tabell_id,
+                 "sökväg" => r.sökväg, "tidpunkt" => string(r.tidpunkt),
+                 "antal_rader" => r.antal_rader, "status" => r.status,
+                 "felmeddelande" => r.felmeddelande, "källa" => r.källa)
+            for r in eachrow(rader)
         ],
     )
-
     json_str = JSON3.write(utdata)
     println(json_str)
     return json_str
