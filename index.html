@@ -234,11 +234,31 @@
 
 <main>
 
-  <!-- Upload -->
-  <div class="upload-area" id="dropZone">
+  <!-- URL-laddning -->
+  <div class="card" style="margin-bottom:1rem;padding:1.2rem 1.4rem;">
+    <div style="font-size:.85rem;color:var(--muted);margin-bottom:.6rem;">
+      🌐 Ladda från URL (GitHub raw / direktlänk till .duckdb)
+    </div>
+    <div style="display:flex;gap:.6rem;flex-wrap:wrap;">
+      <input type="text" id="urlInput"
+        value="https://raw.githubusercontent.com/JaewooJoung/db/main/s/stat.duckdb"
+        style="flex:1;padding:.5rem .9rem;border:1.5px solid var(--border);border-radius:8px;font-size:.85rem;min-width:0;outline:none;"
+      />
+      <button id="urlBtn"
+        style="padding:.5rem 1.2rem;background:var(--gbg-blue);color:white;border:none;border-radius:8px;cursor:pointer;font-size:.9rem;white-space:nowrap;">
+        ⬇ Hämta
+      </button>
+    </div>
+    <div style="font-size:.75rem;color:var(--muted);margin-top:.4rem;">
+      ⚠ GitHub: använd <code>raw.githubusercontent.com</code>-länken, inte vanlig github.com-länk
+    </div>
+  </div>
+
+  <!-- Upload (alternativ) -->
+  <div class="upload-area" id="dropZone" style="margin-bottom:1rem;">
     <input type="file" id="fileInput" accept=".duckdb,.db" />
     <div class="upload-icon">🦆</div>
-    <p><strong>Klicka eller dra hit</strong> din <code>stat.duckdb</code>-fil</p>
+    <p><strong>Eller klicka / dra hit</strong> en lokal <code>.duckdb</code>-fil</p>
     <p style="margin-top:.4rem;font-size:.8rem;">Filen läses lokalt i webbläsaren – inget skickas till server</p>
   </div>
 
@@ -531,11 +551,8 @@
     });
   });
 
-  // ── Filuppladdning ──
-  async function hanteraFil(file) {
-    if (!file) return;
-    setStatus(`Läser ${file.name} (${(file.size/1024).toFixed(0)} KB)...`, 'info', true);
-    const buffer = await file.arrayBuffer();
+  // ── Ladda från buffer ──
+  async function laddaBuffer(buffer, namn) {
     try {
       await initDuckDB(buffer);
       await läsDatabas();
@@ -543,6 +560,66 @@
       setStatus('Fel: ' + e.message, 'error');
       console.error(e);
     }
+  }
+
+  // ── Ladda från URL ──
+  async function laddaFrånUrl(url) {
+    if (!url) return;
+
+    // Konvertera github.com → raw.githubusercontent.com automatiskt
+    // https://github.com/USER/REPO/blob/BRANCH/PATH  →  raw.githubusercontent.com/USER/REPO/BRANCH/PATH
+    // https://github.com/USER/REPO/s/FILE  →  raw.githubusercontent.com/USER/REPO/main/s/FILE
+    let rawUrl = url
+      .replace('https://github.com/', 'https://raw.githubusercontent.com/')
+      .replace('/blob/', '/');
+
+    // Om ingen branch finns i URL, försök lägga till /main/
+    if (rawUrl.includes('raw.githubusercontent.com') &&
+        !rawUrl.match(/raw\.githubusercontent\.com\/[^/]+\/[^/]+\/(main|master|HEAD)\//)) {
+      rawUrl = rawUrl.replace(
+        /raw\.githubusercontent\.com\/([^/]+)\/([^/]+)\/(.+)/,
+        'https://raw.githubusercontent.com/$1/$2/main/$3'
+      );
+    }
+
+    setStatus(`Hämtar från: ${rawUrl}`, 'info', true);
+
+    try {
+      const resp = await fetch(rawUrl);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status} – ${resp.statusText}`);
+      const total = parseInt(resp.headers.get('content-length') || '0');
+      const reader = resp.body.getReader();
+      const chunks = [];
+      let loaded = 0;
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        loaded += value.byteLength;
+        const pct = total ? ` (${Math.round(loaded/total*100)}%)` : ` (${(loaded/1024).toFixed(0)} KB)`;
+        setStatus(`Laddar ner${pct}...`, 'info', true);
+      }
+      const buffer = await new Blob(chunks).arrayBuffer();
+      setStatus(`Nedladdning klar (${(buffer.byteLength/1024).toFixed(0)} KB). Initierar DuckDB...`, 'info', true);
+      await laddaBuffer(buffer, rawUrl.split('/').pop());
+    } catch(e) {
+      setStatus('Nedladdningsfel: ' + e.message, 'error');
+      console.error(e);
+    }
+  }
+
+  document.getElementById('urlBtn').addEventListener('click', () =>
+    laddaFrånUrl(document.getElementById('urlInput').value.trim()));
+
+  document.getElementById('urlInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') laddaFrånUrl(document.getElementById('urlInput').value.trim());
+  });
+
+  // ── Filuppladdning ──
+  async function hanteraFil(file) {
+    if (!file) return;
+    setStatus(`Läser ${file.name} (${(file.size/1024).toFixed(0)} KB)...`, 'info', true);
+    await laddaBuffer(await file.arrayBuffer(), file.name);
   }
 
   document.getElementById('fileInput').addEventListener('change', e => hanteraFil(e.target.files[0]));
@@ -557,6 +634,14 @@
     dropZone.style.background = '';
     hanteraFil(e.dataTransfer.files[0]);
   });
+
+  // ── 자동 로드: URL 파라미터 ?db=URL 지원 ──
+  const params = new URLSearchParams(location.search);
+  const dbParam = params.get('db');
+  if (dbParam) {
+    document.getElementById('urlInput').value = dbParam;
+    laddaFrånUrl(dbParam);
+  }
 </script>
 
 </body>
