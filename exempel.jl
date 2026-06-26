@@ -18,6 +18,8 @@ let deps = Pkg.project().dependencies
     end
 end
 
+using DataFrames
+
 using PxWebApi2
 
 # ─────────────────────────────────────────────────────────────
