@@ -44,7 +44,9 @@ function tabell_rad(kolumner, bredder)
     rad = "│"
     for (k, b) in zip(kolumner, bredder)
         s = string(k === nothing ? "" : k)
-        rad *= " " * rpad(s[1:min(length(s), b)], b) * " │"
+        # first() hanterar Unicode-tecken korrekt (ö, å, ä etc.)
+        klippt = first(s, b)
+        rad *= " " * rpad(klippt, b) * " │"
     end
     println(rad)
 end
