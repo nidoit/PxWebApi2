@@ -6,7 +6,15 @@ Källa: Stadsledningskontoret, Göteborgs Stad
 
 using Pkg
 Pkg.activate(@__DIR__)
-Pkg.instantiate()   # 의존 패키지가 없으면 자동 설치
+
+# 필요한 패키지가 없으면 자동 설치
+const 필요_패키지 = ["HTTP", "JSON3", "DuckDB", "DataFrames", "Tables"]
+for pkg in 필요_패키지
+    if !haskey(Pkg.project().dependencies, pkg)
+        println("패키지 설치 중: $pkg")
+        Pkg.add(pkg)
+    end
+end
 
 using PxWebApi2
 
