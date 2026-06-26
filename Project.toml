@@ -1,0 +1,22 @@
+name = "PxWebApi2"
+uuid = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+authors = ["Stadsledningskontoret, Göteborgs Stad"]
+version = "0.1.0"
+
+[deps]
+DataFrames = "a93c6f00-e57d-5684-b466-afe8fa294f38"
+DuckDB = "d2f5444f-75bc-4fdf-ac35-56f514c445e1"
+Dates = "ade2ca70-3891-5945-98fb-dc099432e06a"
+HTTP = "cd3eb016-35fb-5094-929b-558a96fad6f3"
+JSON3 = "0f8b85d8-7e73-4b43-9a3e-b9a0e8b44579"
+Logging = "56ddb016-857b-54e1-b83d-db4d58db5568"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d3"
+Tables = "bd369af6-aec1-5ad0-b16a-f7cc5008161c"
+
+[compat]
+julia = "1.9"
+DataFrames = "1"
+DuckDB = "1"
+HTTP = "1"
+JSON3 = "1"
+Tables = "1"
